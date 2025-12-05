@@ -126,16 +126,21 @@ def qq_plot(data,yeo = False):
 
 # tab 11
 def num_num_plot(data,kind = 'Hexbin Plot'):
-    ignore_cols = st.multiselect(
-        "### Ignore columns for numeric–numeric analysis:",
+    select_cols = st.multiselect(
+        "### Select columns for numeric–numeric analysis:",
         options=data.columns
     )
-    df = data.drop(columns=ignore_cols)
-    names = df.columns
+    if len(select_cols) != 0 :
+        df = data[select_cols]
+    else:
+        df = data
+
     kind = st.selectbox(
         "Select plot type",
         ["Scatterplot", "Line Plot", "Hexbin Plot"]
     )
+
+    names = df.columns
     if len(names) > 1:
         for i in range(len(names)):
             for j in range(len(names)):
@@ -213,4 +218,5 @@ def num_cat_plot(data):
                 st.write("Pivot Table Output:")
                 st.dataframe(pivot)
             except Exception as e:
+
                 st.error(f"Error generating pivot table: {e}")
