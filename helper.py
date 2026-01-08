@@ -4,28 +4,45 @@ import seaborn as sns
 import streamlit as st
 import scipy.stats as stats
 from sklearn.preprocessing import PowerTransformer
-
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
 # Graphs
-def h_plot(data = None, type = 'all'):
+
+def limit_cat(series):
+    if series.nunique() > 15:
+        return series.value_counts().head(15)
+    else:
+        return series.value_counts()
+
+def h_plot(data = None, typee = 'all'):
+    plt.style.use('default')
     if data is None:
         return 'No Input'
-    for i in data.columns:
-        fig, ax = plt.subplots()
+    names = data.columns
+    for i in names:
+        fig, ax = plt.subplots(figsize = (10,5),ncols = 2, nrows = 1)
         if data[i].dtype in ['int64','float64']:
-            sns.histplot(x=i, data=data, kde=True,fill=True,color='red')
-            ax.set_title(f'Distribution of {i}')
+            sns.histplot(x=i, data=data, kde=True,fill=True,ax = ax[0])
+            ax[0].set_title(f'Distribution of {i}')
+            ax[0].tick_params(rotation = 90)
+            sns.violinplot(x=data[i], ax = ax[1])
             st.pyplot(fig)
             st.markdown("---")
             plt.close(fig)
             # st.write('skew = ',data[i]
         else:
-            if type == 'all':
-                sns.countplot(x = i , data = data , ax = ax,color='green')
-                ax.set_title(f'Count plot of {i}')
+            if typee == 'all':
+                counts = limit_cat(data[i])
+                ax[0].bar(x = counts.index, height = counts.values)
+                ax[0].set_title(f'Count plot of {i}')
+                ax[0].tick_params(rotation = 90)
+                # counts = data[i].value_counts()
+                ax[1].pie(x=counts, labels=counts.index, autopct='%1.1f%%', pctdistance=1.45)
                 st.pyplot(fig)
                 st.markdown("---")
                 plt.close(fig)
-    return None
 # space
 def space(num):
     for i in range(num):
@@ -34,21 +51,25 @@ def space(num):
 
 # categorical data count
 def Count(data):
-    for i in data.columns:
-        count = data[i].value_counts().sort_values(ascending = False)
-        if len(count) > 5:
-            others = count[5::].sum()
-            count = count.head(5)
-            count['Others'] = others
-            df = pd.DataFrame(count)
-            df['Percentage(%)'] = round((df['count'] / df['count'].sum()) * 100,2)
-            st.write('Unique Values',round(df,2))
-            num = 11 - df.shape[0]
+    for col in data.columns:
+        vc = data[col].value_counts().sort_values(ascending=False)
+        if len(vc) > 5:
+            top5 = vc.iloc[:5]
+            others = vc.iloc[5:].sum()
+            df = top5.to_frame(name='count')
+            df.loc['Others'] = others
+            df['Percentage(%)'] = (df['count'] / df['count'].sum() * 100).round(2)
+            st.write("Unique Values")
+            st.write(df.round(2))
+            num = 9 - df.shape[0]
             space(num)
             st.markdown("---")
+
         else:
-            st.write('Unique Values',round(count,2))
-            num = 11 - count.shape[0]
+            df = vc.to_frame(name='count')
+            st.write("Unique Values")
+            st.write(df.round(2))
+            num = 9 - df.shape[0]
             space(num)
             st.markdown("---")
     return None
@@ -59,30 +80,45 @@ def info(data):
     for i in data.columns:
         des = data[i].describe().reset_index()
         result = des.rename(columns = {'index':'Statistics',i:'Values'})
-        st.write('Basic Info',round(result,2))
-        space(9-result.shape[0])
-        st.markdown('---')
+        st.write('Basic Info')
+        st.dataframe(round(result,2))
+        space(30 - result.shape[0] )
 
 
 # Outlies --------------------------------tab-2
 
-def iqr(data,change = False):
+# missing values
+def missing_values(data,num_method = 'median',flag = False):
+    columns = data.columns.tolist()
+    imputer = SimpleImputer(strategy=num_method, add_indicator=flag)
+    imputed = imputer.fit_transform(data)
+    if flag:
+        flag_index = imputer.indicator_.features_
+        new_cols_name = [ columns[i] + '_missing_flag' for i in flag_index]
+        return pd.DataFrame(data = imputed,columns = columns + new_cols_name, index = data.index)
+    return pd.DataFrame(imputed, columns=columns, index=data.index)
+#tab 2,1
+
+def iqr(data,table = False):
+    data = missing_values(data,flag = False)
+    new = data.copy()
     for i in data.columns:
         percentile25 = data[i].quantile(0.25)
         percentile75 = data[i].quantile(0.75)
         iqr = percentile75 - percentile25
         min_value = percentile25 - (1.5 * iqr)
         max_value = percentile75 + (1.5 * iqr)
-        new = data[(data[i] < max_value) & (data[i] > min_value)]
-        if change == False:
-            st.pyplot(multy_plot(data = new, kind = 'histplot',name = i))
-            st.markdown("---")
-        if change == True:
-            ser = round(data[i].describe() - new[i].describe(),2)
-            ser['data removed(%)'] = round(100 - (new[i].shape[0] / data[i].shape[0]) * 100,2)
-            st.dataframe(ser)
+        new = new[(new[i] <= max_value) & (new[i] >= min_value)]
+        if table:
+            old_desc = data[i].describe()
+            new_desc = new[i].describe()
+            diff = old_desc.astype(float) - new_desc.astype(float)
+            diff['data removed (%)'] = round(100 - (new[i].shape[0] / data[i].shape[0]) * 100, 2)
+            st.dataframe(diff)
             st.markdown('---')
-
+    if table == False:
+        h_plot(data = new)
+        st.markdown("---")
 
 # muti types of graphs
 def multy_plot(data,kind = 'histplot',name = None):
@@ -110,18 +146,29 @@ def multy_plot(data,kind = 'histplot',name = None):
 
 
 # skew--------------------tab-3
+def best_qq_col(data):
+    data = missing_values(data)
+    old_skew = data.skew()
+    pf = PowerTransformer(method = 'yeo-johnson',standardize=True)
+    new_data = pd.DataFrame(pf.fit_transform(data),columns = data.columns,index = data.index)
+    new_skew = new_data.skew()
+    improved = new_skew.abs() < old_skew.abs()
+    result = data.copy()
+    for i in data.columns:
+        if i in improved:
+            result[i] = new_data[i]
+    return result
 
+# plot QQ
 def qq_plot(data,yeo = False):
-    if yeo == True:
-        pt = PowerTransformer(method="yeo-johnson", standardize=True)
-        data = pd.DataFrame(
-            pt.fit_transform(data.dropna()),
-            columns=data.columns
-        )
+    if yeo:
+        data = best_qq_col(data)
     for i in data.columns:
         fig = plt.figure()
-        stats.probplot(data[i].dropna(), dist="norm", plot=plt)
+        stats.probplot(data[i], dist="norm", plot=plt)
+        st.write(i)
         st.pyplot(fig)
+        st.write(data[i].skew())
         st.markdown('---')
 
 # tab 11
@@ -130,22 +177,19 @@ def num_num_plot(data,kind = 'Hexbin Plot'):
         "### Select columns for numeric–numeric analysis:",
         options=data.columns
     )
-    if len(select_cols) != 0 :
-        df = data[select_cols]
-    else:
-        df = data
-
     kind = st.selectbox(
         "Select plot type",
         ["Scatterplot", "Line Plot", "Hexbin Plot"]
     )
+    if select_cols is not None:
+        df = data[select_cols]
 
-    names = df.columns
-    if len(names) > 1:
-        for i in range(len(names)):
-            for j in range(len(names)):
-                if j!= i:
-                    st.pyplot(multy_plot(df.iloc[::,[i,j]], kind=kind))
+        names = df.columns
+        if len(names) > 1:
+            for i in range(len(names)):
+                for j in range(len(names)):
+                    if j!= i:
+                        st.pyplot(multy_plot(df.iloc[::,[i,j]], kind=kind))
 
 #tab12
 def cat_cat_plot(data):
@@ -153,30 +197,14 @@ def cat_cat_plot(data):
         '### Choose 2 columns: 1st Index then Column',
         options=data.columns
     )
-    if len(select) == 0:
-        cols = data.columns
-        for i in range(len(cols)):
-            for j in range(i + 1, len(cols)):
-                col1 = cols[i]
-                col2 = cols[j]
-                uniq1 = data[col1].nunique()
-                uniq2 = data[col2].nunique()
-                if uniq1 <= uniq2:
-                    df1 = data[col1]
-                    df2 = data[col2]
-                else:
-                    df1 = data[col2]
-                    df2 = data[col1]
-                st.write(f"### Crosstab: {df1.name} × {df2.name}")
-                st.table(
-                    pd.crosstab(df1, df2, normalize=True, margins=True).mul(100).round(2)
-                )
     if len(select) == 2:
         index, column = select
         st.write(f"### Crosstab: {index} × {column}")
-        st.table(
-            pd.crosstab(index = data[index], columns = data[column], normalize=True, margins=True).mul(100).round(2)
-        )
+        ct = pd.crosstab(index = data[index], columns = data[column], normalize=True, margins=True).mul(100).round(2)
+        st.dataframe(ct)
+        # st.table(
+        #     pd.crosstab(index = data[index], columns = data[column], normalize=True, margins=True).mul(100).round(2)
+        # )
 
 
 
@@ -218,5 +246,4 @@ def num_cat_plot(data):
                 st.write("Pivot Table Output:")
                 st.dataframe(pivot)
             except Exception as e:
-
                 st.error(f"Error generating pivot table: {e}")
