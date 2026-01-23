@@ -5,6 +5,8 @@ import streamlit as st
 import scipy.stats as stats
 from sklearn.preprocessing import PowerTransformer
 from sklearn.impute import SimpleImputer
+from pandas.api.types import is_numeric_dtype
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -17,7 +19,8 @@ def limit_cat(series):
         return series.value_counts()
 
 def h_plot(data = None, typee = 'all'):
-    plt.style.use('default')
+    plt.style.use('ggplot')
+    # plt.style.use('default')
     if data is None:
         return 'No Input'
     names = data.columns
@@ -35,7 +38,7 @@ def h_plot(data = None, typee = 'all'):
         else:
             if typee == 'all':
                 counts = limit_cat(data[i])
-                ax[0].bar(x = counts.index, height = counts.values)
+                ax[0].bar(x = counts.index.astype(str), height = counts.values)
                 ax[0].set_title(f'Count plot of {i}')
                 ax[0].tick_params(rotation = 90)
                 # counts = data[i].value_counts()
@@ -88,19 +91,83 @@ def info(data):
 # Outlies --------------------------------tab-2
 
 # missing values
-def missing_values(data,num_method = 'median',flag = False):
-    columns = data.columns.tolist()
-    imputer = SimpleImputer(strategy=num_method, add_indicator=flag)
-    imputed = imputer.fit_transform(data)
-    if flag:
-        flag_index = imputer.indicator_.features_
-        new_cols_name = [ columns[i] + '_missing_flag' for i in flag_index]
-        return pd.DataFrame(data = imputed,columns = columns + new_cols_name, index = data.index)
-    return pd.DataFrame(imputed, columns=columns, index=data.index)
+# def num_missing_values(data,num_method = 'median',flag = False):
+#     columns = data.columns.tolist()
+#     imputer = SimpleImputer(strategy=num_method, add_indicator=flag)
+#     imputed = imputer.fit_transform(data)
+#     if flag:
+#         flag_index = imputer.indicator_.features_
+#         new_cols_name = [ columns[i] + '_missing_flag' for i in flag_index]
+#         return pd.DataFrame(data = imputed,columns = columns + new_cols_name, index = data.index)
+#     return pd.DataFrame(imputed, columns=columns, index=data.index)
+
+
+def impute_missing_values(data):
+
+    df = data.copy()
+    cols_with_missing = [col for col in df.columns if df[col].isnull().any()]
+
+    if not cols_with_missing:
+        st.success(" No missing values found in the dataset")
+        return data,[]
+
+    st.write("### Missing Value")
+
+    for col in cols_with_missing:
+
+        is_numeric = is_numeric_dtype(df[col])
+        col_type = "Numerical" if is_numeric else "Categorical"
+
+        with st.container():
+            st.markdown(f"**Column:** `{col}` ({col_type}) with {data[col].isnull().sum()} missing values")
+
+            if is_numeric:
+                strategies = [
+                    "Do Nothing",
+                    "Fill with Mean (Average)",
+                    "Fill with Median (Middle Value)",
+                    "Fill with Zero (0)",
+                    "Drop Rows"
+                ]
+            else:
+                strategies = [
+                    "Do Nothing",
+                    "Fill with Mode (Most Frequent)",
+                    "Fill as 'Unknown'",
+                    "Drop Rows"
+                ]
+            selected_method = st.selectbox(
+                f"Choose a strategy for '{col}':",
+                options=strategies,
+                key=f"method_{col}"
+            )
+
+            if selected_method == "Fill with Mean (Average)":
+                df[col] = df[col].fillna(df[col].mean())
+
+            elif selected_method == "Fill with Median (Middle Value)":
+                df[col] = df[col].fillna(df[col].median())
+
+            elif selected_method == "Fill with Zero (0)":
+                df[col] = df[col].fillna(0)
+
+            elif selected_method == "Fill with Mode (Most Frequent)":
+                if not df[col].mode().empty:
+                    df[col] = df[col].fillna(df[col].mode()[0])
+
+            elif selected_method == "Fill as 'Unknown'":
+                df[col] = df[col].fillna("Unknown")
+
+            elif selected_method == "Drop Rows":
+                df.dropna(subset=[col], inplace=True)
+
+            st.markdown("---")
+    return df, cols_with_missing
+
 #tab 2,1
 
-def iqr(data,table = False):
-    data = missing_values(data,flag = False)
+def iqr(data,table = False,df = False):
+    # data = num_missing_values(data,flag = False)
     new = data.copy()
     for i in data.columns:
         percentile25 = data[i].quantile(0.25)
@@ -116,9 +183,12 @@ def iqr(data,table = False):
             diff['data removed (%)'] = round(100 - (new[i].shape[0] / data[i].shape[0]) * 100, 2)
             st.dataframe(diff)
             st.markdown('---')
+    if df == True:
+        return new
     if table == False:
         h_plot(data = new)
         st.markdown("---")
+    return new
 
 # muti types of graphs
 def multy_plot(data,kind = 'histplot',name = None):
@@ -143,33 +213,6 @@ def multy_plot(data,kind = 'histplot',name = None):
         ax.set_xlabel(data.columns[0])
         ax.set_ylabel(data.columns[1])
         return fig
-
-
-# skew--------------------tab-3
-def best_qq_col(data):
-    data = missing_values(data)
-    old_skew = data.skew()
-    pf = PowerTransformer(method = 'yeo-johnson',standardize=True)
-    new_data = pd.DataFrame(pf.fit_transform(data),columns = data.columns,index = data.index)
-    new_skew = new_data.skew()
-    improved = new_skew.abs() < old_skew.abs()
-    result = data.copy()
-    for i in data.columns:
-        if i in improved:
-            result[i] = new_data[i]
-    return result
-
-# plot QQ
-def qq_plot(data,yeo = False):
-    if yeo:
-        data = best_qq_col(data)
-    for i in data.columns:
-        fig = plt.figure()
-        stats.probplot(data[i], dist="norm", plot=plt)
-        st.write(i)
-        st.pyplot(fig)
-        st.write(data[i].skew())
-        st.markdown('---')
 
 # tab 11
 def num_num_plot(data,kind = 'Hexbin Plot'):
@@ -206,9 +249,6 @@ def cat_cat_plot(data):
         #     pd.crosstab(index = data[index], columns = data[column], normalize=True, margins=True).mul(100).round(2)
         # )
 
-
-
-# num * cat = Violin plot, Bar chart, Grouped summary statistics, stripplot tab 3
 
 # tab13-----------group by
 def num_cat_plot(data):
@@ -247,3 +287,54 @@ def num_cat_plot(data):
                 st.dataframe(pivot)
             except Exception as e:
                 st.error(f"Error generating pivot table: {e}")
+
+# Feature Scaling & Normalization
+def normalization(data):
+    for col in data.columns:
+        with st.container():
+            st.markdown(f"**Column Name:** `{col}`")
+            strategies = [
+                "Do Nothing",
+                "MinMaxScaler",
+                "StandardScaler"
+            ]
+            selected_method = st.selectbox(
+                f"Choose a strategy for '{col}':",
+                options=strategies,
+                key=f"Scaler{col}"
+            )
+
+            if selected_method == 'MinMaxScaler':
+                scaler = MinMaxScaler()
+                data[[col]] = scaler.fit_transform(data[[col]])
+            elif selected_method == 'StandardScaler':
+                scaler = StandardScaler()
+                data[[col]] = scaler.fit_transform(data[[col]])
+    return data
+
+
+# # skew--------------------tab-3
+# def best_qq_col(data):
+#     data = num_missing_values(data)
+#     old_skew = data.skew()
+#     pf = PowerTransformer(method = 'yeo-johnson',standardize=True)
+#     new_data = pd.DataFrame(pf.fit_transform(data),columns = data.columns,index = data.index)
+#     new_skew = new_data.skew()
+#     improved = new_skew.abs() < old_skew.abs()
+#     result = data.copy()
+#     for i in data.columns:
+#         if i in improved:
+#             result[i] = new_data[i]
+#     return result
+#
+# # plot QQ
+# def qq_plot(data,yeo = False):
+#     if yeo:
+#         data = best_qq_col(data)
+#     for i in data.columns:
+#         fig = plt.figure()
+#         stats.probplot(data[i], dist="norm", plot=plt)
+#         st.write(i)
+#         st.pyplot(fig)
+#         st.write(data[i].skew())
+#         st.markdown('---')
